@@ -46,7 +46,7 @@ Transitions live in one table in `convex/lib/loans.ts`; anything else is rejecte
 
 1. **LendLoop - request notification** (`request-notification.json`). Webhook `POST /webhook/lendloop-request-events` -> verify the HMAC signature over the raw body -> `401` on a bad, missing or stale signature, otherwise `202` -> build and log the message for the recipient (mock delivery) -> sign and POST a write-back to Convex `/automation/notifications` (3 tries). The write-back is what shows up as "Owner notified of the request" on the loan.
 2. **LendLoop - overdue reminders** (`overdue-reminders.json`). Schedule Trigger every day at 08:00 UTC (plus a manual trigger) -> signed `POST /automation/overdue` -> one item per overdue loan -> log a reminder to the borrower (mock delivery) -> signed `POST /automation/reminders` per loan -> summary -> fetch again while Convex says more loans are waiting. Convex leaves loans out of the list once they have today's reminder, and the write-back is keyed `reminder:<loanId>:<day>`, so a retry or a second run the same day records one reminder. Each fetch returns at most 100 loans plus `hasMore`, so the run works through any number of overdue loans in batches; after 20 batches it stops with an error, which the error workflow records.
-3. **LendLoop - error handler** (`error-handler.json`). Error Trigger, set as the error workflow of the two above. It logs the failure and records it in Convex `/automation/failures` (idempotent per execution id), where admins see it on the Admin page.
+3. **LendLoop - error handler** (`error-handler.json`). Error Trigger, set as the error workflow of the two above. It records the failure in Convex `/automation/failures` (idempotent per execution id), where admins see it on the Admin page.
 
 **Import by hand instead of `npm run n8n:import`:** in the n8n editor use *Import from file* for the three JSON files, then publish each. The CLI import keeps the fixed workflow ids that link the two workflows to the error handler; if the editor gives new ids, pick "LendLoop - error handler" as the *Error workflow* in each workflow's settings.
 
@@ -70,6 +70,7 @@ npx clerk@latest init --accountless --framework next --pm npm --no-skills
 
 # 2. Convex: a local deployment with no login (or run `npx convex dev` and choose to run locally
 #    without an account). Leave it running in its own terminal.
+#    Until step 3 runs it warns that CLERK_JWT_ISSUER_DOMAIN is not set: expected.
 CONVEX_AGENT_MODE=anonymous npx convex dev
 
 # 3. In a second terminal: create the Clerk "convex" JWT template and point Convex at Clerk
@@ -153,7 +154,7 @@ Nothing secret is committed. `.env.local` and `n8n/.env` are gitignored; `.env.e
 | `npm test` | Vitest + convex-test: role checks, the request state machine, overlap and date rules, the public list's exact fields, idempotent write-backs over signed HTTP, webhook delivery with retries and backoff, HMAC sign and verify (good, tampered body and signature, wrong secret, wrong endpoint, stale and future timestamps, malformed headers) | 36 tests |
 | `npm run test:e2e` | Playwright against the running stack (Convex, Next.js, n8n). `smoke.spec.ts`: public list, Clerk sign-in with `+clerk_test` users (code `424242`), list, request, approve, return, admin Trusted Lender and remove; it also waits for the n8n write-backs to appear on the loan. `automation.spec.ts`: n8n rejects unsigned, tampered, wrong-secret and stale webhooks; Convex rejects tampered and stale calls; two reminder runs on the same day record one reminder; a failed run lands in the error workflow and in Convex. | 13 tests |
 
-The e2e tests create their three Clerk test users through the Clerk Backend API on first run and need `docker` on the `PATH` (they run the overdue workflow with `n8n execute` inside the container).
+Run `npx playwright install chromium` once before the first `npm run test:e2e`. The e2e tests create their three Clerk test users through the Clerk Backend API on first run and need `docker` on the `PATH` (they run the overdue workflow with `n8n execute` inside the container).
 
 ## Project layout
 

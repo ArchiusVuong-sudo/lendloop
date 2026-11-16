@@ -31,7 +31,8 @@ export function convexTable<T = Record<string, unknown>>(table: string, limit = 
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  return JSON.parse(out) as T[];
+  // `convex data` prints nothing at all for an empty table
+  return out.trim() === "" ? [] : (JSON.parse(out) as T[]);
 }
 
 /** Runs a workflow once through the n8n CLI (a second task-broker port, since n8n itself is running). */
