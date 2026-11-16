@@ -1,8 +1,11 @@
+import { auth } from "@clerk/nextjs/server";
 import { AppNav } from "@/components/AppNav";
 import { EnsureUser } from "@/components/EnsureUser";
 
-// Signed-in area. proxy.ts already redirects signed-out visitors; Convex re-checks every call.
-export default function AppLayout({ children }: LayoutProps<"/">) {
+// Signed-in area: signed-out visitors are sent to /sign-in. This is UX only; every Convex
+// function checks identity and role again.
+export default async function AppLayout({ children }: LayoutProps<"/">) {
+  await auth.protect();
   return (
     <>
       <AppNav />

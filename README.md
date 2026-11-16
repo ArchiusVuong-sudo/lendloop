@@ -26,7 +26,7 @@ flowchart LR
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Next.js app | `app/`, `components/`, `proxy.ts` | Public page, Clerk sign-in pages, the signed-in views. `proxy.ts` sends signed-out visitors to sign-in; the real checks live in Convex. |
+| Next.js app | `app/`, `components/`, `proxy.ts` | Public page, Clerk sign-in pages, the signed-in views. The signed-in layout sends signed-out visitors to sign-in; the real checks live in Convex. |
 | Convex functions | `convex/tools.ts`, `requests.ts`, `admin.ts`, `users.ts` | All reads and writes. Every public function checks identity, ownership and role itself. |
 | Outbox | `convex/notifications.ts` | Each request change inserts an outbox row and schedules an action that signs and POSTs the event to n8n, retrying with backoff (5 attempts). |
 | Signed HTTP endpoints | `convex/http.ts`, `convex/automation.ts` | `/automation/overdue`, `/automation/reminders`, `/automation/notifications`, `/automation/failures`, all HMAC-verified. Write-backs are idempotent. |
@@ -123,7 +123,7 @@ Nothing secret is committed. `.env.local` and `n8n/.env` are gitignored; `.env.e
 
 - **Authorization lives in Convex, not the UI.** Every public query and mutation starts with `requireViewer` or `requireAdmin` (`convex/lib/auth.ts`) and then checks ownership: only a tool's owner edits or deletes it, only the owner approves, declines or marks returned, only the borrower cancels, and nobody borrows their own tool. Admins can remove any listing (cascade delete), see every loan and set Trusted Lender. The UI hides buttons for convenience; the tests call the functions directly as the wrong user to prove the server refuses.
 - **Roles are server-side data.** A new user always gets `user`. `admin` can only be granted by an internal mutation run from the Convex CLI, so no client call can escalate. The role is read from the database on every call, not from the token.
-- **Authentication.** Clerk issues a short-lived JWT from a `convex` template (audience `convex`); Convex verifies it against Clerk's JWKS. `proxy.ts` redirects signed-out visitors away from the app pages.
+- **Authentication.** Clerk issues a short-lived JWT from a `convex` template (audience `convex`); Convex verifies it against Clerk's JWKS. `proxy.ts` runs Clerk's middleware, and the signed-in layout (`app/(app)/layout.tsx`) redirects signed-out visitors to sign-in.
 - **Signed integration in both directions.** Every Convex -> n8n and n8n -> Convex call carries `x-lendloop-timestamp` and `x-lendloop-signature: v1=<hex>`, an HMAC-SHA256 over `timestamp.METHOD.path.rawBody`:
   - the timestamp must be within 5 minutes (stale or replayed-later calls fail),
   - method and path are signed, so a signature for one endpoint cannot be reused on another,

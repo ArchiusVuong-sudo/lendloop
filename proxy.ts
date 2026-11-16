@@ -1,13 +1,8 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-// Everything except the public landing page and the auth screens needs a session.
-const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
-
-export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
-  }
-});
+// Makes the Clerk session available to server code. Pages check access themselves
+// (see app/(app)/layout.tsx), and Convex checks every call again.
+export default clerkMiddleware();
 
 export const config = {
   matcher: [
