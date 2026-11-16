@@ -183,7 +183,41 @@
         80
       ],
       "parameters": {
-        "jsCode": "const counts = {};\nfor (const item of $input.all()) counts[item.json.status] = (counts[item.json.status] || 0) + 1;\nconsole.log('[lendloop] reminder write-backs: ' + JSON.stringify(counts));\nreturn [{ json: { reminders: $input.all().length, ...counts } }];\n"
+        "jsCode": "// Convex returns at most one batch of overdue loans per call and says if more are waiting.\n// This pass has recorded its reminders, so the next call starts after them.\nconst MAX_PASSES = 20;\nconst counts = {};\nfor (const item of $input.all()) counts[item.json.status] = (counts[item.json.status] || 0) + 1;\nconst hasMore = $('Fetch overdue loans').first().json.hasMore === true;\nconsole.log('[lendloop] reminder write-backs, pass ' + ($runIndex + 1) + ': ' + JSON.stringify(counts)\n  + (hasMore ? ', fetching the next batch' : ''));\nif (hasMore && $runIndex + 1 >= MAX_PASSES) {\n  throw new Error('Overdue loans still waiting after ' + MAX_PASSES + ' passes; the rest got no reminder today');\n}\nreturn [{ json: { reminders: $input.all().length, ...counts, hasMore } }];\n"
+      }
+    },
+    {
+      "id": "more-overdue",
+      "name": "More overdue loans?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3d1b7c52-8e4a-4f19-9a6b-2c5e7f0d4a81",
+              "leftValue": "={{ $json.hasMore }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       }
     }
   ],
@@ -274,6 +308,29 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Summary": {
+      "main": [
+        [
+          {
+            "node": "More overdue loans?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More overdue loans?": {
+      "main": [
+        [
+          {
+            "node": "Sign overdue query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   }

@@ -127,4 +127,33 @@ describe("request state machine", () => {
     await expect(owner.as.mutation(api.requests.approve, { requestId: second })).rejects.toThrow(/already lent out/);
     expect(await statusOf(t, second)).toBe("pending");
   });
+
+  it("does not approve a request whose dates have already passed", async () => {
+    const { t, owner, borrower, stranger, toolId, request } = await scenario();
+    const past = await request("2026-03-11", "2026-03-13");
+    const endsYesterday = await stranger.as.mutation(api.requests.create, {
+      toolId,
+      startDate: "2026-03-17",
+      endDate: "2026-03-19",
+    });
+    const ladderId = await owner.as.mutation(api.tools.create, { ...DRILL, name: "Ladder" });
+    const underWay = await borrower.as.mutation(api.requests.create, {
+      toolId: ladderId,
+      startDate: "2026-03-19",
+      endDate: "2026-03-25",
+    });
+
+    vi.setSystemTime(new Date("2026-03-20T04:00:00Z"));
+    await expect(owner.as.mutation(api.requests.approve, { requestId: past })).rejects.toThrow(/already passed/);
+    expect(await statusOf(t, past)).toBe("pending");
+
+    // A user behind UTC can still be on the 19th, and a loan already under way is fine.
+    await owner.as.mutation(api.requests.approve, { requestId: endsYesterday });
+    await owner.as.mutation(api.requests.approve, { requestId: underWay });
+    expect(await statusOf(t, endsYesterday)).toBe("approved");
+    expect(await statusOf(t, underWay)).toBe("approved");
+
+    await owner.as.mutation(api.requests.decline, { requestId: past });
+    expect(await statusOf(t, past)).toBe("declined");
+  });
 });

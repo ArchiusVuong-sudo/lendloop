@@ -1,13 +1,21 @@
-// Creates n8n/.env with fresh random secrets (if missing) and copies the two shared HMAC
-// secrets plus the webhook URL into the Convex deployment's env. Never prints a secret.
+// Creates n8n/.env with fresh random secrets (if missing), points it at this Convex deployment,
+// and copies the two shared HMAC secrets plus the webhook URL into the Convex deployment's env.
+// Never prints a secret.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { loadEnvFile } from "./env.mjs";
 
 const N8N_ENV = "n8n/.env";
 const n8nPort = process.env.N8N_HOST_PORT ?? "5698";
-const convexSitePort = process.env.CONVEX_SITE_PORT ?? "3211";
+
+// `convex dev` writes the HTTP actions URL to .env.local; its port moves on when 3211 is taken.
+const siteUrl = loadEnvFile(".env.local").NEXT_PUBLIC_CONVEX_SITE_URL;
+if (!siteUrl) throw new Error("NEXT_PUBLIC_CONVEX_SITE_URL is missing in .env.local. Start `npx convex dev` first.");
+const convexSite = new URL(siteUrl);
+// From inside the n8n container, a local backend on this machine is host.docker.internal.
+if (["127.0.0.1", "localhost", "[::1]"].includes(convexSite.hostname)) convexSite.hostname = "host.docker.internal";
+const siteLine = `LENDLOOP_CONVEX_SITE_URL=${convexSite.origin}`;
 
 if (!existsSync(N8N_ENV)) {
   const hex = () => randomBytes(32).toString("hex");
@@ -18,25 +26,39 @@ if (!existsSync(N8N_ENV)) {
       `N8N_ENCRYPTION_KEY=${hex()}`,
       `LENDLOOP_WEBHOOK_SECRET=${hex()}`,
       `LENDLOOP_CONVEX_API_SECRET=${hex()}`,
-      `LENDLOOP_CONVEX_SITE_URL=http://host.docker.internal:${convexSitePort}`,
+      siteLine,
       "",
     ].join("\n"),
   );
   chmodSync(N8N_ENV, 0o600);
   console.log(`Wrote ${N8N_ENV}`);
 } else {
-  console.log(`${N8N_ENV} exists, keeping its secrets`);
+  // Keep the secrets; only the Convex URL line follows the current deployment.
+  const text = readFileSync(N8N_ENV, "utf8");
+  const pattern = /^\s*LENDLOOP_CONVEX_SITE_URL\s*=.*$/m;
+  const next = pattern.test(text) ? text.replace(pattern, () => siteLine) : `${text.replace(/\n?$/, "\n")}${siteLine}\n`;
+  if (next === text) {
+    console.log(`${N8N_ENV} exists, keeping its secrets`);
+  } else {
+    writeFileSync(N8N_ENV, next);
+    console.log(`Kept the secrets in ${N8N_ENV}, set ${siteLine}. Run \`docker compose up -d\` so n8n picks it up.`);
+  }
 }
 
 const env = loadEnvFile(N8N_ENV);
 const convexEnv = {
   LENDLOOP_WEBHOOK_SECRET: env.LENDLOOP_WEBHOOK_SECRET,
   LENDLOOP_CONVEX_API_SECRET: env.LENDLOOP_CONVEX_API_SECRET,
-  N8N_WEBHOOK_URL: `http://localhost:${n8nPort}/webhook/lendloop-request-events`,
+  N8N_WEBHOOK_URL: `http://127.0.0.1:${n8nPort}/webhook/lendloop-request-events`,
 };
 for (const [name, value] of Object.entries(convexEnv)) {
   if (!value) throw new Error(`${name} is empty`);
-  // stdout is dropped so the CLI never echoes a value.
-  execFileSync("npx", ["convex", "env", "set", name, value], { stdio: ["ignore", "ignore", "inherit"] });
+  try {
+    // The value goes in on stdin, never in argv (process list, error messages); stdout is dropped.
+    execFileSync("npx", ["convex", "env", "set", name], { input: value, stdio: ["pipe", "ignore", "inherit"] });
+  } catch {
+    console.error(`Could not set ${name} on the Convex deployment. Is \`npx convex dev\` running?`);
+    process.exit(1);
+  }
   console.log(`Set ${name} on the Convex deployment`);
 }

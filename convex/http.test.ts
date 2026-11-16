@@ -90,6 +90,7 @@ describe("overdue reminders", () => {
           borrower: { clerkUserId: "user_ben", displayName: "Ben" },
         },
       ],
+      hasMore: false,
     });
   });
 
@@ -117,6 +118,30 @@ describe("overdue reminders", () => {
     const [loan] = await borrower.as.query(api.requests.mine, {});
     expect(loan.overdue).toBe(true);
     expect(loan.activity[0].summary).toMatch(/Overdue reminder sent/);
+  });
+
+  it("pages through more overdue loans than one batch, so no borrower is skipped", async () => {
+    const t = setupConvex();
+    const { requestId } = await overdueLoan(t);
+    await t.run(async (ctx) => {
+      const { toolId, ownerId, borrowerId, startDate, endDate, status } = (await ctx.db.get(requestId))!;
+      for (let i = 0; i < 149; i++) {
+        await ctx.db.insert("requests", { toolId, ownerId, borrowerId, startDate, endDate, status });
+      }
+    });
+
+    const pages = [];
+    for (let round = 0; round < 3; round++) {
+      const { loans, hasMore } = await (await post(t, "/automation/overdue", {})).json();
+      pages.push([loans.length, hasMore]);
+      for (const loan of loans) await post(t, "/automation/reminders", { requestId: loan.requestId, day: "2026-03-10" });
+    }
+    expect(pages).toEqual([
+      [100, true],
+      [50, false],
+      [0, false],
+    ]);
+    expect(await activityRows(t)).toHaveLength(150);
   });
 
   it("rejects unknown loans and days outside today or yesterday", async () => {

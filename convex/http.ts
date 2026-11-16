@@ -55,14 +55,14 @@ function signed(handler: (ctx: ActionCtx, body: Json) => Promise<Response>) {
 
 const http = httpRouter();
 
-// Daily reminder run: which loans are overdue and still need today's reminder.
+// Daily reminder run: which loans are overdue and still need today's reminder. n8n asks again while hasMore.
 http.route({
   path: "/automation/overdue",
   method: "POST",
   handler: signed(async (ctx) => {
     const asOf = utcDay(Date.now());
-    const loans = await ctx.runQuery(internal.automation.overdueLoans, { asOf });
-    return json(200, { asOf, loans });
+    const { loans, hasMore } = await ctx.runQuery(internal.automation.overdueLoans, { asOf });
+    return json(200, { asOf, loans, hasMore });
   }),
 });
 

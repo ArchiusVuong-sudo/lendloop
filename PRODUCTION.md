@@ -19,7 +19,7 @@ What I would change before real neighbors use it. The local setup favours zero a
 
 - Secrets in each platform's secret store (host env, Convex env, n8n credentials or its external-secrets vault), never in files on a server.
 - Turn `N8N_BLOCK_ENV_ACCESS_IN_NODE` back on and give the Code nodes the HMAC secrets through n8n external secrets (`$secrets.<vault>.<name>`), so workflow editors cannot read the whole process env.
-- Rotation without downtime: add a key id header (`x-lendloop-key-id`), let receivers accept the current and the previous secret for a short window, roll the sender, then drop the old secret. Rotate on a schedule, and at once on any suspected leak.
+- Rotation without downtime: add a key id header (`x-lendloop-key-id`), let receivers accept the current and the previous secret for a short window, roll the sender, then drop the old secret. Rotate on a schedule, and at once on any suspected leak. Both sides hold both secrets, so a compromised Convex deployment or n8n host means rotating both.
 - Replay protection inside the 5 minute window: remember seen event ids or signatures for 5 minutes (n8n static data or a shared cache) and reject repeats. Drop the `reason` from `401` responses.
 
 ## Notifications

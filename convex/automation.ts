@@ -18,16 +18,19 @@ const NOTIFICATION_SUMMARY: Record<Doc<"notifications">["event"], string> = {
   "request.returned": "Borrower notified: marked returned",
 };
 
-/** Approved loans past their end date that have not had a reminder for `asOf` yet. */
+/**
+ * Up to OVERDUE_BATCH approved loans past their end date that have no reminder for `asOf` yet.
+ * Reminded loans are skipped before the batch fills, so `hasMore` callers can page until done.
+ */
 export const overdueLoans = internalQuery({
   args: { asOf: v.string() },
   handler: async (ctx, { asOf }) => {
-    const loans = await ctx.db
+    const overdue = ctx.db
       .query("requests")
-      .withIndex("by_status_end", (q) => q.eq("status", "approved").lt("endDate", asOf))
-      .take(OVERDUE_BATCH);
+      .withIndex("by_status_end", (q) => q.eq("status", "approved").lt("endDate", asOf));
     const out = [];
-    for (const loan of loans) {
+    let hasMore = false;
+    for await (const loan of overdue) {
       const alreadyReminded = await ctx.db
         .query("activity")
         .withIndex("by_key", (q) => q.eq("idempotencyKey", reminderKey(loan._id, asOf)))
@@ -35,6 +38,10 @@ export const overdueLoans = internalQuery({
       if (alreadyReminded) continue;
       const [tool, borrower] = await Promise.all([ctx.db.get(loan.toolId), ctx.db.get(loan.borrowerId)]);
       if (!tool || !borrower) continue;
+      if (out.length === OVERDUE_BATCH) {
+        hasMore = true;
+        break;
+      }
       out.push({
         requestId: loan._id,
         toolName: tool.name,
@@ -43,7 +50,7 @@ export const overdueLoans = internalQuery({
         borrower: { clerkUserId: borrower.clerkUserId, displayName: borrower.displayName },
       });
     }
-    return out;
+    return { loans: out, hasMore };
   },
 });
 

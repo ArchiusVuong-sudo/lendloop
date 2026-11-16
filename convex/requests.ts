@@ -38,7 +38,13 @@ async function transition(
     );
   }
   assertTransition(request.status, to);
-  if (to === "approved") await assertNoOverlap(ctx, request);
+  if (to === "approved") {
+    // A request whose dates are over would become an overdue loan at once. Same one-day slack as create.
+    if (request.endDate < addDays(utcDay(Date.now()), -1)) {
+      throw appError("CONFLICT", "The requested dates have already passed.");
+    }
+    await assertNoOverlap(ctx, request);
+  }
 
   const now = Date.now();
   await ctx.db.patch(requestId, {
@@ -58,7 +64,7 @@ export const create = mutation({
 
     if (!isIsoDay(startDate) || !isIsoDay(endDate)) throw appError("INVALID", "Dates must be YYYY-MM-DD.");
     if (endDate < startDate) throw appError("INVALID", "The end date must be on or after the start date.");
-    // One day of slack so a user ahead of UTC can still ask for "today".
+    // One day of slack so a user behind UTC can still ask for "today".
     if (startDate < addDays(utcDay(Date.now()), -1)) throw appError("INVALID", "The start date is in the past.");
     if (daysBetween(startDate, endDate) + 1 > LIMITS.maxLoanDays) {
       throw appError("INVALID", `Loans can be at most ${LIMITS.maxLoanDays} days.`);

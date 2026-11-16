@@ -11,7 +11,7 @@ export const USERS = {
   admin: { key: "admin", firstName: "Ada", email: "lendloop-ada+clerk_test@example.com" },
 } satisfies Record<string, TestUser>;
 
-export const N8N_URL = process.env.E2E_N8N_URL ?? "http://localhost:5698";
+export const N8N_URL = process.env.E2E_N8N_URL ?? "http://127.0.0.1:5698";
 export const N8N_CONTAINER = process.env.N8N_CONTAINER ?? "lendloop-n8n";
 
 /** Clerk user ids written by global setup, keyed by USERS key. */
