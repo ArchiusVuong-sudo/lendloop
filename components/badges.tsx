@@ -32,7 +32,12 @@ export function AvailabilityBadge({ availability }: { availability: Availability
     case "reserved":
       return <Badge tone="amber">Available, reserved from {formatDay(availability.from)}</Badge>;
     case "on_loan":
-      return <Badge tone="violet">On loan until {formatDay(availability.until)}</Badge>;
+      // Loan days are UTC calendar days, like on the server.
+      return availability.until < new Date().toISOString().slice(0, 10) ? (
+        <Badge tone="red">On loan, was due {formatDay(availability.until)}</Badge>
+      ) : (
+        <Badge tone="violet">On loan until {formatDay(availability.until)}</Badge>
+      );
   }
 }
 

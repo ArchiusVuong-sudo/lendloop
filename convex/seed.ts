@@ -59,19 +59,35 @@ export const demo = internalMutation({
   },
 });
 
-/** A fresh overdue loan between the demo neighbors, for exercising the reminder workflow. */
+/**
+ * A fresh overdue loan on the demo wheelbarrow, for exercising the reminder workflow.
+ * Earlier demo loans on it are closed first, so the tool never has two loans at once.
+ */
 export const overdueLoan = internalMutation({
   args: {},
   handler: async (ctx) => {
     const sam = await demoUser(ctx, "sam", "Sam");
     const priya = await demoUser(ctx, "priya", "Priya");
-    const toolId = await ctx.db.insert("tools", {
-      ownerId: priya,
-      name: "Wheelbarrow",
-      category: "garden",
-      condition: "good",
-      description: "Demo tool for the overdue reminder run.",
-    });
+    const existing = await ctx.db
+      .query("tools")
+      .withIndex("by_owner", (q) => q.eq("ownerId", priya))
+      .filter((q) => q.eq(q.field("name"), "Wheelbarrow"))
+      .first();
+    const toolId =
+      existing?._id ??
+      (await ctx.db.insert("tools", {
+        ownerId: priya,
+        name: "Wheelbarrow",
+        category: "garden",
+        condition: "good",
+        description: "Demo tool for the overdue reminder run.",
+      }));
+    const open = await ctx.db
+      .query("requests")
+      .withIndex("by_tool_status", (q) => q.eq("toolId", toolId).eq("status", "approved"))
+      .collect();
+    for (const loan of open) await ctx.db.patch(loan._id, { status: "returned", returnedAt: Date.now() });
+
     const today = utcDay(Date.now());
     const requestId = await ctx.db.insert("requests", {
       toolId,
