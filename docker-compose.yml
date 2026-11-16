@@ -1,0 +1,35 @@
+# n8n for LendLoop automations: request notifications, daily overdue reminders, error handling.
+services:
+  n8n:
+    image: n8nio/n8n:2.47.7
+    container_name: lendloop-n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_HOST_PORT:-5698}:5678"
+    # Secrets (encryption key, both HMAC secrets) live in n8n/.env, gitignored. See n8n/.env.example.
+    env_file:
+      - path: ./n8n/.env
+        required: true
+    environment:
+      WEBHOOK_URL: http://localhost:${N8N_HOST_PORT:-5698}/
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      # Code nodes use node's crypto for HMAC and read the shared secrets from env.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # console.log in Code nodes (the mock notifications) shows in `docker compose logs n8n`.
+      CODE_ENABLE_STDOUT: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+
+volumes:
+  n8n_data:

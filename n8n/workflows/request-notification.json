@@ -1,0 +1,255 @@
+{
+  "id": "LendLoopNotify01",
+  "name": "LendLoop - request notification",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "LendLoopErrors01",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "request-event",
+      "name": "Request event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "5c1f6b0e-8a52-4a7e-9d43-2f0b7e1a9c11",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "verify-signature",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Verifies the HMAC signature Convex puts on every request event (see README, Signing).\nconst PATH = '/webhook/lendloop-request-events';\nconst TOLERANCE_SECONDS = 300;\nconst secret = $env.LENDLOOP_WEBHOOK_SECRET;\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst timestamp = String(headers['x-lendloop-timestamp'] || '');\nconst signature = String(headers['x-lendloop-signature'] || '');\nconst raw = item.binary && item.binary.data\n  ? (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8')\n  : '';\n\nfunction rejectReason() {\n  if (!secret) return 'not_configured';\n  if (!timestamp || !signature) return 'missing_headers';\n  if (!/^\\d{1,12}$/.test(timestamp) || !/^v1=[0-9a-f]{64}$/.test(signature)) return 'malformed';\n  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > TOLERANCE_SECONDS) return 'stale';\n  const expected = crypto.createHmac('sha256', secret).update(timestamp + '.POST.' + PATH + '.' + raw).digest();\n  return crypto.timingSafeEqual(expected, Buffer.from(signature.slice(3), 'hex')) ? null : 'bad_signature';\n}\n\nconst reason = rejectReason();\nif (reason) {\n  console.warn('[lendloop] rejected request event: ' + reason);\n  return [{ json: { valid: false, reason } }];\n}\nreturn [{ json: { valid: true, event: JSON.parse(raw) } }];\n"
+      }
+    },
+    {
+      "id": "signature-valid",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6a7c2f0e-31b4-4a8e-8c0f-1d2e3f4a5b6c",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "reject",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: \"invalid_signature\", reason: $json.reason }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "accept",
+      "name": "Accept 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        -120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, eventId: $json.event.eventId }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "send-notification-mock-",
+      "name": "Send notification (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// Mock delivery: logs the message instead of sending an email. Uses only the fields in the event.\nconst e = $input.first().json.event;\nconst range = e.request.startDate === e.request.endDate\n  ? e.request.startDate\n  : e.request.startDate + ' to ' + e.request.endDate;\nconst name = e.recipient.displayName;\nconst messages = {\n  'request.created': name + ', a neighbor asked to borrow your ' + e.tool.name + ' (' + range + '). Open LendLoop to approve or decline.',\n  'request.approved': name + ', your request for the ' + e.tool.name + ' (' + range + ') was approved.',\n  'request.declined': name + ', your request for the ' + e.tool.name + ' (' + range + ') was declined.',\n  'request.cancelled': name + ', the request for your ' + e.tool.name + ' (' + range + ') was cancelled.',\n  'request.returned': name + ', the ' + e.tool.name + ' was marked returned. Thanks for borrowing!',\n};\nconst text = messages[e.type];\nif (!text) throw new Error('Unknown event type: ' + e.type);\n\nconsole.log('[lendloop] notify to=' + e.recipient.clerkUserId + ' event=' + e.type + ' id=' + e.eventId + ': ' + text);\nreturn [{ json: { eventId: e.eventId, channel: 'log', to: e.recipient.clerkUserId, text } }];\n"
+      }
+    },
+    {
+      "id": "sign-write-back",
+      "name": "Sign write-back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Signs a call to Convex: HMAC-SHA256 over \"timestamp.METHOD.path.body\" (see README, Signing).\nfunction signForConvex(path, payload) {\n  const secret = $env.LENDLOOP_CONVEX_API_SECRET;\n  const baseUrl = $env.LENDLOOP_CONVEX_SITE_URL;\n  if (!secret || !baseUrl) throw new Error('LENDLOOP_CONVEX_API_SECRET or LENDLOOP_CONVEX_SITE_URL is not set');\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const mac = crypto.createHmac('sha256', secret).update(timestamp + '.POST.' + path + '.' + body).digest('hex');\n  return { url: baseUrl + path, body, timestamp, signature: 'v1=' + mac };\n}\n\nreturn [{ json: signForConvex('/automation/notifications', { eventId: $input.first().json.eventId }) }];\n"
+      }
+    },
+    {
+      "id": "record-in-convex",
+      "name": "Record in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Request event": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept 202": {
+      "main": [
+        [
+          {
+            "node": "Send notification (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send notification (mock)": {
+      "main": [
+        [
+          {
+            "node": "Sign write-back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign write-back": {
+      "main": [
+        [
+          {
+            "node": "Record in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

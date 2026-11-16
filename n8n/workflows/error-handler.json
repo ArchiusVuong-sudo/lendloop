@@ -1,0 +1,100 @@
+{
+  "id": "LendLoopErrors01",
+  "name": "LendLoop - error handler",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "on-error",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "log-and-sign-failure",
+      "name": "Log and sign failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Signs a call to Convex: HMAC-SHA256 over \"timestamp.METHOD.path.body\" (see README, Signing).\nfunction signForConvex(path, payload) {\n  const secret = $env.LENDLOOP_CONVEX_API_SECRET;\n  const baseUrl = $env.LENDLOOP_CONVEX_SITE_URL;\n  if (!secret || !baseUrl) throw new Error('LENDLOOP_CONVEX_API_SECRET or LENDLOOP_CONVEX_SITE_URL is not set');\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const mac = crypto.createHmac('sha256', secret).update(timestamp + '.POST.' + path + '.' + body).digest('hex');\n  return { url: baseUrl + path, body, timestamp, signature: 'v1=' + mac };\n}\n\n// Works for both shapes n8n sends: a failed execution, or a trigger that failed to start.\nconst { execution = {}, workflow = {}, trigger } = $input.first().json;\nconst error = execution.error || (trigger && trigger.error) || {};\nconst message = String(error.message || 'Unknown error').slice(0, 500);\nconst executionId = String(execution.id || 'trigger-' + (workflow.id || 'unknown') + '-' + Date.now());\nconst nodeName = execution.lastNodeExecuted || (error.node && error.node.name) || undefined;\n\nconsole.error('[lendloop] workflow failed: ' + (workflow.name || workflow.id) + ' execution=' + executionId\n  + ' node=' + (nodeName || '-') + ': ' + message);\n\nreturn [{ json: signForConvex('/automation/failures', {\n  executionId,\n  workflowName: workflow.name || 'unknown',\n  nodeName,\n  message,\n}) }];\n"
+      }
+    },
+    {
+      "id": "record-failure-in-convex",
+      "name": "Record failure in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Log and sign failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log and sign failure": {
+      "main": [
+        [
+          {
+            "node": "Record failure in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
